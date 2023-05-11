@@ -16,6 +16,25 @@ class VirtualEnvManager:
         pass
 
     def create_venv(self, path, interpreter=None, system_site_packages=False, symlinks=False, copies=False):
+        parent_venv = self.find_parent_venv(path)
+        if parent_venv:
+            inherit_dependencies = messagebox.askyesno(
+                "Inherit dependencies",
+                "A parent virtual environment has been detected. Do you want the new virtual environment to inherit its dependencies?",
+            )
+            if inherit_dependencies:
+                system_site_packages = True
+
+            python_version = sys.version_info
+            parent_python_version = self.get_python_version(parent_venv)
+            if python_version != parent_python_version:
+                proceed = messagebox.askyesno(
+                    "Python versions mismatch",
+                    f"The parent virtual environment uses Python {parent_python_version.major}.{parent_python_version.minor}, while the current Python interpreter uses version {python_version.major}.{python_version.minor}. They may not perfectly match each other's capacities. Do you still want to proceed?",
+                )
+                if not proceed:
+                    return
+
         builder = venv.EnvBuilder(system_site_packages=system_site_packages, symlinks=symlinks, clear=True)
         builder.create(path)
 
@@ -41,6 +60,27 @@ class VirtualEnvManager:
 
                 with open(script, "w") as file:
                     file.writelines(content)
+
+    def find_parent_venv(self, path):
+        while path != os.path.dirname(path):
+            path = os.path.dirname(path)
+            if self.is_venv(path):
+                return path
+        return None
+
+    def get_python_version(self, venv_path):
+        if sys.platform == "win32":
+            python_path = os.path.join(venv_path, "Scripts", "python.exe")
+        else:
+            python_path = os.path.join(venv_path, "bin", "python")
+        result = subprocess.run([python_path, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        version_string = result.stdout.strip() if result.stdout else result.stderr.strip()
+        try:
+            return tuple(map(int, version_string.split()[1].split(".")))
+        except ValueError:
+            messagebox.showerror("Error", "Unable to determine the Python version.")
+            return None
+
 
     def clone_current_interpreter(self, venv_path):
         current_interpreter = sys.executable
@@ -103,15 +143,28 @@ class VirtualEnvManager:
         subprocess.run([pip_path, "install", package_name])
 
     def is_venv(self, path):
-        bin_path = os.path.join(path, "bin")
-        if not os.path.exists(bin_path):
-            return False
+        if os.name == 'nt':  # Windows
+            scripts_path = os.path.join(path, "Scripts")
+            pyvenv_cfg_path = os.path.join(path, "pyvenv.cfg")
+            include_path = os.path.join(path, "Include")
+            lib_path = os.path.join(path, "Lib")
 
-        python_path = os.path.join(bin_path, "python")
-        if not os.path.exists(python_path):
-            return False
+            return (
+                os.path.exists(scripts_path)
+                and os.path.exists(pyvenv_cfg_path)
+                and os.path.exists(include_path)
+                and os.path.exists(lib_path)
+            )
+        else:  # Unix systems
+            bin_path = os.path.join(path, "bin")
+            if not os.path.exists(bin_path):
+                return False
 
-        return True
+            python_path = os.path.join(bin_path, "python")
+            if not os.path.exists(python_path):
+                return False
+
+            return True
 
     def run_script(self, venv_path, script_path):
         if not self.is_venv(venv_path):
